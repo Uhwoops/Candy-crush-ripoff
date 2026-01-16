@@ -1,0 +1,321 @@
+
+import SwiftUI
+
+
+@main
+struct CandyCrushCloneApp: App {
+    var body: some Scene {
+        WindowGroup {
+            GameView()
+        }
+    }
+}
+
+enum CandyType: CaseIterable {
+    case red, blue, green, yellow, purple, orange
+    
+    var color: Color {
+        switch self {
+        case .red: return .red
+        case .blue: return .blue
+        case .green: return .green
+        case .yellow: return .yellow
+        case .purple: return .purple
+        case .orange: return .orange
+        }
+    }
+    
+    var emoji: String {
+        switch self {
+        case .red: return "🍓"
+        case .blue: return "🫐"
+        case .green: return "🍏"
+        case .yellow: return "🍋"
+        case .purple: return "🍇"
+        case .orange: return "🍊"
+        }
+    }
+}
+
+struct Candy: Identifiable, Equatable {
+    let id = UUID()
+    var row: Int
+    var col: Int
+    var type: CandyType
+}
+
+struct GridPosition: Hashable {
+    var row: Int
+    var col: Int
+}
+
+
+final class CandyCrushViewModel: ObservableObject {
+    @Published var grid: [[Candy?]] = []
+    @Published var score = 0
+    @Published var selected: GridPosition? = nil
+    
+    @Published var timeRemaining = 60
+    @Published var movesRemaining = 20
+    @Published var isGameOver = false
+    
+    private var timer: Timer?
+    
+    let rows = 8
+    let cols = 8
+    
+    init() {
+        newGame()
+    }
+    
+    func newGame() {
+        score = 0
+        selected = nil
+        timeRemaining = 60
+        movesRemaining = 20
+        isGameOver = false
+        
+        timer?.invalidate()
+        
+        grid = Array(
+            repeating: Array(repeating: nil, count: cols),
+            count: rows
+        )
+        
+        for r in 0..<rows {
+            for c in 0..<cols {
+                grid[r][c] = randomCandy(row: r, col: c)
+            }
+        }
+        
+        removeStartingMatches()
+        startTimer()
+    }
+    
+    private func randomCandy(row: Int, col: Int) -> Candy {
+        Candy(row: row, col: col, type: CandyType.allCases.randomElement()!)
+    }
+    
+    private func removeStartingMatches() {
+        var matches = findMatches()
+        while !matches.isEmpty {
+            for pos in matches {
+                grid[pos.row][pos.col] = randomCandy(row: pos.row, col: pos.col)
+            }
+            matches = findMatches()
+        }
+    }
+    
+    private func startTimer() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            if self.isGameOver { return }
+            
+            if self.timeRemaining > 0 {
+                self.timeRemaining -= 1
+            } else {
+                self.gameOver()
+            }
+        }
+    }
+    
+    private func gameOver() {
+        timer?.invalidate()
+        isGameOver = true
+    }
+    
+    func tap(row: Int, col: Int) {
+        guard !isGameOver else { return }
+        guard movesRemaining > 0 else { return }
+        guard grid[row][col] != nil else { return }
+        
+        let pos = GridPosition(row: row, col: col)
+        
+        if let selected = selected {
+            if selected == pos {
+                self.selected = nil
+            } else if isAdjacent(selected, pos) {
+                attemptSwap(from: selected, to: pos)
+                self.selected = nil
+            } else {
+                self.selected = pos
+            }
+        } else {
+            self.selected = pos
+        }
+    }
+    
+    private func isAdjacent(_ a: GridPosition, _ b: GridPosition) -> Bool {
+        let dr = abs(a.row - b.row)
+        let dc = abs(a.col - b.col)
+        return (dr == 1 && dc == 0) || (dr == 0 && dc == 1)
+    }
+    
+    private func attemptSwap(from: GridPosition, to: GridPosition) {
+        swapCandies(from, to)
+        
+        let matches = findMatches()
+        if matches.isEmpty {
+            swapCandies(from, to) 
+        } else {
+            movesRemaining -= 1
+            cascadeMatches()
+            if movesRemaining == 0 { gameOver() }
+        }
+    }
+    
+    private func swapCandies(_ a: GridPosition, _ b: GridPosition) {
+        let temp = grid[a.row][a.col]
+        grid[a.row][a.col] = grid[b.row][b.col]
+        grid[b.row][b.col] = temp
+        
+        grid[a.row][a.col]?.row = a.row
+        grid[a.row][a.col]?.col = a.col
+        grid[b.row][b.col]?.row = b.row
+        grid[b.row][b.col]?.col = b.col
+    }
+    
+    private func cascadeMatches() {
+        var matches = findMatches()
+        while !matches.isEmpty {
+            remove(matches)
+            dropCandies()
+            matches = findMatches()
+        }
+    }
+    
+    private func findMatches() -> Set<GridPosition> {
+        var matched: Set<GridPosition> = []
+        
+       
+        for r in 0..<rows {
+            for c in 0..<cols - 2 {
+                guard let base = grid[r][c] else { continue }
+                if let c1 = grid[r][c + 1],
+                   let c2 = grid[r][c + 2],
+                   c1.type == base.type,
+                   c2.type == base.type {
+                    matched.insert(GridPosition(row: r, col: c))
+                    matched.insert(GridPosition(row: r, col: c + 1))
+                    matched.insert(GridPosition(row: r, col: c + 2))
+                }
+            }
+        }
+        
+        
+        for c in 0..<cols {
+            for r in 0..<rows - 2 {
+                guard let base = grid[r][c] else { continue }
+                if let c1 = grid[r + 1][c],
+                   let c2 = grid[r + 2][c],
+                   c1.type == base.type,
+                   c2.type == base.type {
+                    matched.insert(GridPosition(row: r, col: c))
+                    matched.insert(GridPosition(row: r + 1, col: c))
+                    matched.insert(GridPosition(row: r + 2, col: c))
+                }
+            }
+        }
+        
+        return matched
+    }
+    
+    private func remove(_ matches: Set<GridPosition>) {
+        score += matches.count * 10
+        for pos in matches {
+            grid[pos.row][pos.col] = nil
+        }
+    }
+    
+    private func dropCandies() {
+        for c in 0..<cols {
+            var column: [Candy] = []
+            
+            for r in (0..<rows).reversed() {
+                if let candy = grid[r][c] {
+                    column.append(candy)
+                }
+            }
+            
+            var index = 0
+            for r in (0..<rows).reversed() {
+                if index < column.count {
+                    var candy = column[index]
+                    candy.row = r
+                    candy.col = c
+                    grid[r][c] = candy
+                    index += 1
+                } else {
+                    grid[r][c] = randomCandy(row: r, col: c)
+                }
+            }
+        }
+    }
+}
+
+
+struct GameView: View {
+    @StateObject private var vm = CandyCrushViewModel()
+    
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: [.purple, .pink, .orange]),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .ignoresSafeArea()
+            
+            VStack(spacing: 16) {
+                Text("Candy Crush Clone")
+                    .font(.largeTitle.bold())
+                    .foregroundColor(.white)
+                
+                HStack(spacing: 30) {
+                    Text("Score: \(vm.score)")
+                    Text("Time: \(vm.timeRemaining)")
+                    Text("Moves: \(vm.movesRemaining)")
+                }
+                .foregroundColor(.white)
+                .font(.headline)
+                
+                VStack(spacing: 4) {
+                    ForEach(0..<vm.rows, id: \.self) { r in
+                        HStack(spacing: 4) {
+                            ForEach(0..<vm.cols, id: \.self) { c in
+                                CandyCellView(
+                                    candy: vm.grid[r][c],
+                                    isSelected: vm.selected?.row == r && vm.selected?.col == c
+                                )
+                                .onTapGesture { vm.tap(row: r, col: c) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct CandyCellView: View {
+    let candy: Candy?
+    let isSelected: Bool
+    
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(candy?.type.color.opacity(0.85) ?? .gray.opacity(0.2))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(isSelected ? Color.white : Color.clear, lineWidth: 3)
+                )
+            
+            if let candy {
+                Text(candy.type.emoji)
+                    .font(.title)
+            }
+        }
+        .frame(width: 42, height: 42)
+    }
+}
